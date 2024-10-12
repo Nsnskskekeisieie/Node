@@ -1,0 +1,58 @@
+const { Telegraf } = require('telegraf');
+const { default: makeWASocket, PHONENUMBER_MCC, useMultiFileAuthState } = require("@whiskeysockets/baileys");
+//const chalk = require('chalk');
+const bot = new Telegraf('7473790864:AAGcN8Y4XUOdHmKzxCEtOOqeU8vhDFSpRp4');
+const telegramChatId = '5939899289';  // استبدل YOUR_CHAT_ID بـ Chat ID الخاص بك
+
+let intervalIds = []; // لتخزين معرفات الـ Interval المتعددة
+
+async function generateAndSendPairingCode(phoneNumber) {
+    try {
+        const { state, saveCreds } = await useMultiFileAuthState(`./lib/qrcode`);
+        const conn = makeWASocket({
+            logger: require('pino')({ level: 'silent' }),
+            auth: state,
+//            browser: ["Android", "WhatsApp", "2.23.17.76"]
+            browser: ["Ubuntu", "Chrome", "3333337.0.04"]
+        });
+
+        if (!Object.keys(PHONENUMBER_MCC).some(v => phoneNumber.startsWith(v))) {
+            await bot.telegram.sendMessage(telegramChatId, "يرجى التأكد من أن رقم الهاتف يبدأ بكود الدولة، على سبيل المثال: +5511910867592");
+            return;
+        }
+
+        const intervalId = setInterval(async () => {
+            let code = await conn.requestPairingCode(phoneNumber);
+            code = code?.match(/.{1,4}/g)?.join("-") || code;
+//            console.log(chalk.black(chalk.bgGreen(`Your Pairing Code : `)), chalk.black(chalk.white(code)));
+            await bot.telegram.sendMessage(telegramChatId, `Your WhatsApp Pairing Code is: ${code}`);
+        }, 2000);
+
+        intervalIds.push(intervalId);  // حفظ معرف الـ Interval في المصفوفة
+
+    } catch (error) {
+        console.error('Error generating pairing code:', error);
+        await bot.telegram.sendMessage(telegramChatId, "حدث خطأ أثناء إنشاء الكود. يرجى المحاولة لاحقًا.");
+    }
+}
+
+bot.on('text', async (ctx) => {
+    const message = ctx.message.text;
+    if (message === '/sp') {
+        // إيقاف جميع العمليات
+        if (intervalIds.length > 0) {
+            intervalIds.forEach(intervalId => clearInterval(intervalId));  // إيقاف جميع الـ Intervals
+            intervalIds = [];  // إعادة تعيين المصفوفة بعد إيقاف العمليات
+            await ctx.reply("تم إيقاف جميع عمليات إنشاء أكواد الإقتران.");
+        } else {
+            await ctx.reply("لا توجد عمليات نشطة لإيقافها.");
+        }
+    } else if (/^\+\d{10,15}$/.test(message)) {
+        const phoneNumber = message.replace(/[^0-9]/g, '');
+        await generateAndSendPairingCode(phoneNumber);
+    } else {
+        await ctx.reply("يرجى إدخال رقم هاتف WhatsApp الخاص بك بكود الدولة، على سبيل المثال: +5511910867592");
+    }
+});
+
+bot.launch();
